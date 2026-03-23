@@ -1,3 +1,6 @@
+include:
+  - docker-compose-deps-postgres.yml
+
 services:
   app:
     build:
@@ -7,18 +10,51 @@ services:
     env_file:
       - ./.env
     environment:
-      - NEXT_PUBLIC_HAWKBIT_API_URL=http://localhost:8080
+      - HAWKBIT_API_URL=http://hawkbit:8080
     ports:
       - '3000:3000'
     volumes:
       - ./:/app
       - /app/node_modules
 
-  hawkbit:
-    image: hawkbit/hawkbit-update-server:latest
-    ports:
-      - '8080:8080'
+  # ---------------------
+  # HawkBit DB Init
+  # ---------------------
+  hawkbit-db-init:
+    image: "hawkbit/hawkbit-repository-jpa-init:latest"
     environment:
+      - 'HAWKBIT_DB_MODE=migrate'
+      - 'SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/hawkbit'
+      - 'SPRING_DATASOURCE_USERNAME=postgres'
+      - 'SPRING_DATASOURCE_PASSWORD=admin'
+      - 'AND_THEN=sleep infinity'
+    restart: always
+    healthcheck:
+      test: ["CMD", "pgrep", "sleep"]
+      start_period: 30s
+      interval: 10s
+      retries: 5
+      timeout: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      NAME: "hawkbit-db-init"
+
+  # ---------------------
+  # HawkBit service
+  # ---------------------
+  hawkbit:
+    image: "hawkbit/hawkbit-update-server:latest"
+    environment:
+      - 'PROFILES=postgresql'
+      - 'SPRING_FLYWAY_ENABLED=false'
+      - 'SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/hawkbit'
+      - 'SPRING_DATASOURCE_USERNAME=postgres'
+      - 'SPRING_DATASOURCE_PASSWORD=admin'
+      - 'SPRING_RABBITMQ_HOST=rabbitmq'
+      - 'SPRING_RABBITMQ_USERNAME=guest'
+      - 'SPRING_RABBITMQ_PASSWORD=guest'
       - 'SPRING_APPLICATION_JSON={
       "hawkbit.server.security.cors.enabled": "true", 
       "hawkbit.server.security.cors.allowedOrigins": "http://localhost:3000", 
@@ -26,6 +62,14 @@ services:
       "hawkbit.server.security.cors.allowedMethods": "GET,POST,PUT,DELETE,OPTIONS,HEAD",
       "hawkbit.server.security.cors.allowCredentials": "true"
       }'
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      hawkbit-db-init:
+        condition: service_healthy
+    labels:
+      NAME: "hawkbit"
     volumes:
       - artifactrepo:/artifactrepo
 
